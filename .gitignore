@@ -1,0 +1,6 @@
+/.env
+/node_modules
+Backups
+image_cache.txt
+package-lock.json
+CACHE BACKUP.json
