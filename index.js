@@ -56,6 +56,13 @@ const extractPixivImageUrl = (msg) => {
     return null;
 };
 
+// Function to extract fxtwitter links directly
+const extractFxTwitterLink = (msg) => {
+    const fxTwitterRegex = /https:\/\/fxtwitter\.com\/i\/status\/\d+/; // Regex updated to match the status link format
+    const urlMatch = msg.content.match(fxTwitterRegex);
+    return urlMatch ? urlMatch[0] : null;
+};
+
 // Function to load image cache from a file
 async function loadImageCache() {
     try {
@@ -132,6 +139,10 @@ async function buildImageCache() {
                     imageUrl = extractTwitterImageUrl(msg);
                 }
 
+                if (!imageUrl) {
+                    imageUrl = extractFxTwitterLink(msg); // Check fxtwitter link
+                }
+
                 if (imageUrl && await verifyUrl(imageUrl)) {
                     const isDuplicate = imageCache.some((img) => img.url === imageUrl);
                     if (!isDuplicate) {
@@ -161,33 +172,44 @@ async function buildImageCache() {
 async function addImageToCache(message) {
     let imageUrl;
 
+    // Check for attachments first
     if (message.attachments.size > 0) {
         imageUrl = message.attachments.first().url;
     }
 
+    // Check for Pixiv links
     if (!imageUrl) {
         imageUrl = extractPixivImageUrl(message);
     }
 
+    // Check for fxtwitter links
+    if (!imageUrl) {
+        imageUrl = extractFxTwitterLink(message);
+    }
+
+    // Check for Twitter images from embeds
     if (!imageUrl) {
         imageUrl = extractTwitterImageUrl(message);
     }
 
-    if (imageUrl && await verifyUrl(imageUrl)) {
-        const isDuplicate = imageCache.some((img) => img.url === imageUrl);
-        if (!isDuplicate) {
-            const nextId = imageCache.length + 1;
-            imageCache.push({ id: nextId, url: imageUrl });
-            console.log(`New image added to cache with ID: ${nextId} and URL: ${imageUrl}`);
-            saveImageCache();
+    // Verify and add to cache if valid
+    if (imageUrl) {
+        const isValid = await verifyUrl(imageUrl);
+        if (isValid) {
+            const isDuplicate = imageCache.some((img) => img.url === imageUrl);
+            if (!isDuplicate) {
+                const nextId = imageCache.length + 1;
+                imageCache.push({ id: nextId, url: imageUrl });
+                console.log(`New image added to cache with ID: ${nextId} and URL: ${imageUrl}`);
+                saveImageCache();
+            } else {
+                console.log(`Duplicate URL found, not adding to cache: ${imageUrl}`);
+            }
+        } else {
+            console.log(`Invalid or inaccessible URL: ${imageUrl}`);
         }
-    } else {
-        console.log(`Invalid or inaccessible URL: ${imageUrl}`);
     }
 }
-
-// Bot ready event
-
 
 // Bot ready event
 client.once('ready', async () => {
@@ -203,7 +225,6 @@ client.once('ready', async () => {
         await buildImageCache();
     }
 });
-
 
 // Message handler
 client.on('messageCreate', async (message) => {
@@ -241,60 +262,34 @@ client.on('messageCreate', async (message) => {
 
     if (message.content.startsWith('!nevoboy')) {
         const parts = message.content.split(' ');
-        let imageId;
+        let imageId = null;
 
         if (parts.length > 1) {
             imageId = parseInt(parts[1], 10);
         }
 
         if (imageId) {
+            // Find and return the image with the specified ID
             const image = imageCache.find(img => img.id === imageId);
             if (image) {
-                return message.channel.send(`ID: ${image.id}\n${image.url}`);
+                return message.channel.send(`ID: ${image.id}\nURL: ${image.url}`);
             } else {
-                return message.channel.send(`No image found with ID: ${imageId}`);
+                return message.channel.send(`Image with ID ${imageId} not found.`);
             }
         } else {
-            const randomImage = imageCache[Math.floor(Math.random() * imageCache.length)];
-            return message.channel.send(`ID: ${randomImage.id}\n${randomImage.url}`);
-        }
-    }
-
-    if (message.content === '!nevoboy') {
-        console.log('!nevoboy triggered, running the command...');
-        const randomImage = imageCache[Math.floor(Math.random() * imageCache.length)];
-        return message.channel.send(`ID: ${randomImage.id}\n${randomImage.url}`);
-    }
-
-    // Rule retrieval
-    if (message.content.startsWith('rule')) {
-        const parts = message.content.split(' ');
-        if (parts.length > 1) {
-            const ruleId = parts[1];
-            const rule = rules[ruleId];
-            if (rule) {
-                return message.channel.send(`${rule}`);
+            // Return the most recent image
+            const recentImage = imageCache[imageCache.length - 1];
+            if (recentImage) {
+                return message.channel.send(`ID: ${recentImage.id}\nURL: ${recentImage.url}`);
             } else {
-                return false;
+                return message.channel.send('No images found in cache.');
             }
         }
     }
 
-    // Rule addition (only for user with ID 200048044786450433)
-    if (message.content.startsWith('!nevoaddrule') && message.author.id === '200048044786450433') {
-        const parts = message.content.split(' ');
-        if (parts.length >= 3) {
-            const ruleId = parts[1];
-            const phrase = parts.slice(2).join(' ');
-            rules[ruleId] = phrase;
-            saveRules(rules);
-            return message.channel.send(`Rule ${ruleId} added: ${phrase}`);
-        } else {
-            return message.channel.send('Invalid format. Usage: !nevoaddrule [ruleid] [phrase]');
-        }
-    }
+    // Handle cache building
+    await addImageToCache(message);
 });
 
-
-// Log in the client with the bot token from environment variables
-client.login(process.env.BOT_TOKEN);
+// Log in to Discord
+client.login(process.env.DISCORD_TOKEN); // Use your Discord bot token from environment variables
