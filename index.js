@@ -263,7 +263,6 @@ const commandDescriptions = {
     'rule [id]': 'Confirms the existence of a rule with the specified ID without revealing its content.',
     '!nevoaddrule [id] [phrase]': 'Adds a new rule for a specific user.',
     '!nevobuildcache': 'Rebuilds the image cache and informs users when it’s done.',
-    '!nevorestart': 'Restarts the bot.',
     '!commands': 'Lists all commands available to the bot, including other command triggers.',
     '!rules': 'Lists all currently existing rule IDs without revealing their content.'
 };
