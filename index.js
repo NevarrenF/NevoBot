@@ -11,6 +11,8 @@ const client = new Client({
 const TARGET_CHANNEL_ID = '1104045425029287988'; // Channel ID for 'this-is-for-nevo'
 const CACHE_FILE_PATH = path.join('C:', 'Users', 'Nevo', 'NevoBot', 'image_cache.json'); // Path for the JSON cache file
 const RULES_FILE_PATH = path.join(__dirname, 'rules.json'); // Path for the rules JSON file
+const COMMANDS_FILE_PATH = path.join(__dirname, 'commandwords.json'); // Path for the commands JSON file
+
 
 let imageCache = []; // Array to store image objects { id, url }
 let isBuildingCache = false; // Flag to check if cache is currently being built
@@ -24,6 +26,15 @@ function loadRules() {
     return JSON.parse(data);
 }
 
+// Function to load commands from the commands.json file
+function loadCommands() {
+    if (!fs.existsSync(COMMANDS_FILE_PATH)) {
+        fs.writeFileSync(COMMANDS_FILE_PATH, JSON.stringify({}), 'utf-8');
+    }
+    const data = fs.readFileSync(COMMANDS_FILE_PATH, 'utf-8');
+    return JSON.parse(data);
+}
+
 // Function to save rules to the rules.json file
 function saveRules(rules) {
     fs.writeFileSync(RULES_FILE_PATH, JSON.stringify(rules, null, 2), 'utf-8');
@@ -31,6 +42,7 @@ function saveRules(rules) {
 
 // Load existing rules at startup
 let rules = loadRules();
+let commands = loadCommands();
 
 // Function to extract Twitter images from embeds
 const extractTwitterImageUrl = (msg) => {
@@ -120,7 +132,7 @@ async function buildImageCache() {
 
             for (const msg of messages.values()) {
                 // Only process messages from the correct channel
-                if (msg.channel.id !== TARGET_CHANNEL_ID) continue;
+                if (msg.channel.id !== TARGET_CHANNEL_ID) continue; // Ensure we're in the correct channel
 
                 let imageUrl;
 
@@ -166,6 +178,25 @@ async function buildImageCache() {
 }
 
 
+// Function to fetch image URL from FXTwitter link
+async function fetchFxTwitterImage(fxTwitterLink) {
+    try {
+        const response = await axios.get(fxTwitterLink);
+        const imageUrlRegex = /<meta property="og:image" content="([^"]+)"/; // Adjust regex if necessary
+        const match = response.data.match(imageUrlRegex);
+        return match ? match[1] : null; // Return the first capturing group (image URL)
+    } catch (error) {
+        console.error(`Error fetching image from FXTwitter link: ${fxTwitterLink}`, error.message);
+        return null;
+    }
+}
+
+
+
+
+
+
+
 // Function to extract fxtwitter links directly
 const extractFxTwitterLink = (msg) => {
     const fxTwitterRegex = /https:\/\/fxtwitter\.com\/\w+\/status\/\d+/;  // Adjust regex to match full tweet URL
@@ -175,37 +206,42 @@ const extractFxTwitterLink = (msg) => {
 
 // Function to add new image to cache
 async function addImageToCache(message) {
-    let imageUrl;
+    // Ensure this function only runs for messages in the target channel
+    if (message.channel.id !== TARGET_CHANNEL_ID) return;
 
+    // Add a delay of 5 seconds (5000 milliseconds)
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
+    let imageUrl = null;
+
+    // Check for attached images first
     if (message.attachments.size > 0) {
         imageUrl = message.attachments.first().url;
+        console.log(`Found attachment URL: ${imageUrl}`);
     }
 
+    // Extract image URLs from other sources if no attachment is found
     if (!imageUrl) {
-        imageUrl = extractPixivImageUrl(message);
+        imageUrl = extractPixivImageUrl(message) || extractTwitterImageUrl(message) || extractFxTwitterLink(message);
+        console.log(`Extracted image URL: ${imageUrl}`);
     }
 
-    if (!imageUrl) {
-        imageUrl = extractTwitterImageUrl(message);
-    }
-
-    // Check for fxtwitter links
-    if (!imageUrl) {
-        imageUrl = extractFxTwitterLink(message);
-    }
-
+    // If we found an image URL and it's valid
     if (imageUrl && await verifyUrl(imageUrl)) {
         const isDuplicate = imageCache.some((img) => img.url === imageUrl);
         if (!isDuplicate) {
-            const nextId = imageCache.length + 1;
-            imageCache.push({ id: nextId, url: imageUrl });
-            console.log(`New image added to cache with ID: ${nextId} and URL: ${imageUrl}`);
-            saveImageCache();
+            const newId = imageCache.length + 1;
+            imageCache.push({ id: newId, url: imageUrl });
+            console.log(`New link found, adding to cache: ${imageUrl}`);
+            saveImageCache(); // Ensure the cache is saved after adding
+        } else {
+            console.log(`Duplicate image URL: ${imageUrl}`);
         }
     } else {
         console.log(`Invalid or inaccessible URL: ${imageUrl}`);
     }
 }
+
 
 // Bot ready event
 client.once('ready', async () => {
@@ -221,17 +257,136 @@ client.once('ready', async () => {
         await buildImageCache();
     }
 });
+// Define the command descriptions
+const commandDescriptions = {
+    '!nevoboy': 'Sends a random image from the cache or an image with a specific ID.',
+    'rule [id]': 'Confirms the existence of a rule with the specified ID without revealing its content.',
+    '!nevoaddrule [id] [phrase]': 'Adds a new rule for a specific user.',
+    '!nevobuildcache': 'Rebuilds the image cache and informs users when it’s done.',
+    '!nevorestart': 'Restarts the bot.',
+    '!commands': 'Lists all commands available to the bot, including other command triggers.',
+    '!rules': 'Lists all currently existing rule IDs without revealing their content.'
+};
 
-// Message handler
 client.on('messageCreate', async (message) => {
+    console.log(`Received message: ${message.content}`);
+
+    // Ignore messages from bots
     if (message.author.bot) return;
 
-    // Check if the !nevoboy command is being used in the target channel
-    if (message.channel.id === TARGET_CHANNEL_ID && message.content.startsWith('!nevoboy')) {
-        return message.channel.send("Can't be used in this channel.");
+    const userMessage = message.content.trim().toLowerCase(); // Normalize user message
+
+    // Check if the message is from the target channel
+    if (message.channel.id === TARGET_CHANNEL_ID) {
+        // If the message is from the target channel, do not allow the !nevoboy command
+        if (userMessage.startsWith('!nevoboy')) {
+            return message.channel.send("Can't be used in this channel.");
+        }
+
+        // Handle adding image to cache only from the target channel
+        await addImageToCache(message);
+        return; // Exit after processing the target channel
     }
 
-    if (message.content === '!nevobuildcache') {
+    if (userMessage === '!rules') {
+        const ruleIds = Object.keys(rules); // Get all rule IDs
+        if (ruleIds.length === 0) {
+            return message.channel.send('There are currently no rules defined.');
+        }
+    
+        // Join rule IDs into a comma-separated string
+        const ruleList = ruleIds.join(', ');
+        return message.channel.send(`All rules: ${ruleList}`);
+    }
+
+
+    // Check for the "wah" command with any amount of "a's" or capitalization
+    const wahRegex = /^w(a+)h$/i; // Matches "wah" with one or more "a's" (case insensitive)
+    if (wahRegex.test(userMessage)) {
+        return message.channel.send('https://cdn.discordapp.com/attachments/1069014008427978762/1296913347966406750/image.png?ex=6714042d&is=6712b2ad&hm=26dc4f625a7d63ef63c78237a775a12b9cda194cda16d993ff38b790e72ec4fd&');
+    }
+
+    // Handle commands for all other channels
+    if (commands[userMessage]) {
+        console.log(`Command recognized: ${userMessage}`);
+        return message.channel.send(commands[userMessage]); // Send the response from the JSON file
+    }
+
+    // Check if the user's message matches any trigger words in commandwords.json
+    for (const trigger in commands) {
+        if (userMessage.includes(trigger)) {
+            console.log(`${trigger}`);
+            return message.channel.send(commands[trigger]); // Send the corresponding response
+        }
+    }
+
+    // Handle the !commands command
+    if (userMessage === '!commands') {
+        const commandList = Object.entries(commandDescriptions)
+            .map(([command, description]) => `${command} - ${description}`)
+            .join('\n');
+
+        return message.channel.send(`Here are the available commands:\n${commandList}`);
+    }
+
+    // Handle rule command
+    if (userMessage.startsWith('rule ')) {
+        const ruleId = userMessage.split(' ')[1];
+        if (rules[ruleId]) {
+            return message.channel.send(`${rules[ruleId]}`); // Send only the rule text
+        } else {
+            return message.channel.send(`Rule ${ruleId} not found.`);
+        }
+    }
+
+    // Handle command to add new rule
+    if (userMessage.startsWith('!nevoaddrule')) {
+        const parts = userMessage.split(' ');
+        const userId = message.author.id;
+
+        if (userId !== '200048044786450433') {
+            return message.channel.send('You do not have permission to add rules.');
+        }
+
+        const ruleId = parts[1];
+        const phrase = parts.slice(2).join(' ');
+
+        if (!ruleId || !phrase) {
+            return message.channel.send('Please provide a rule ID and the phrase.');
+        }
+
+        rules[ruleId] = phrase;
+        saveRules(rules);
+        return message.channel.send(`Rule ${ruleId} added successfully.`);
+    }
+
+    // Handle the !nevoboy command
+    if (userMessage.startsWith('!nevoboy')) {
+        const parts = userMessage.split(' '); // Split the command and arguments
+        if (parts.length === 1) {
+            // If no ID is provided, send a random image
+            if (imageCache.length > 0) {
+                const randomIndex = Math.floor(Math.random() * imageCache.length);
+                const randomImage = imageCache[randomIndex];
+                return message.channel.send(`ID: ${randomImage.id}\n${randomImage.url}`);
+            } else {
+                return message.channel.send('No images available in the cache.');
+            }
+        } else if (parts.length === 2) {
+            // If an ID is provided, send the image with that ID
+            const id = parseInt(parts[1], 10);
+            const image = imageCache.find(img => img.id === id);
+
+            if (image) {
+                return message.channel.send(`ID: ${image.id}\n${image.url}`);
+            } else {
+                return message.channel.send(`No image found with ID: ${id}`);
+            }
+        }
+    }
+
+    // Handle the command to build the cache
+    if (userMessage === '!nevobuildcache') {
         console.log('!nevobuildcache command triggered');
 
         if (isBuildingCache) {
@@ -256,66 +411,16 @@ client.on('messageCreate', async (message) => {
         return message.channel.send(`Cache rebuilt with ${totalImagesLoaded} images loaded.`);
     }
 
-    // Handle !nevoboy command
-    if (message.content.startsWith('!nevoboy')) {
-        const parts = message.content.split(' ');
-        let imageId;
-
-        if (parts.length > 1) {
-            imageId = parseInt(parts[1], 10);
-        }
-
-        if (imageId) {
-            const image = imageCache.find(img => img.id === imageId);
-            if (image) {
-                return message.channel.send(`ID: ${image.id}\n${image.url}`);
-            } else {
-                return message.channel.send(`No image found with ID: ${imageId}`);
-            }
-        } else {
-            const randomImage = imageCache[Math.floor(Math.random() * imageCache.length)];
-            if (randomImage) {
-                return message.channel.send(`ID: ${randomImage.id}\n${randomImage.url}`);
-            } else {
-                return message.channel.send('No images available in the cache.');
-            }
-        }
-    }
-
-    // Handle rule command
-if (message.content.startsWith('rule ')) {
-    const ruleId = message.content.split(' ')[1];
-    if (rules[ruleId]) {
-        return message.channel.send(`${rules[ruleId]}`);  // Send only the rule text
-    } else {
-        return message.channel.send(`Rule ${ruleId} not found.`);
-    }
-}
-
-    // Handle command to add new rule
-    if (message.content.startsWith('!nevoaddrule')) {
-        const parts = message.content.split(' ');
-        const userId = message.author.id;
-
-        if (userId !== '200048044786450433') {
-            return message.channel.send('You do not have permission to add rules.');
-        }
-
-        const ruleId = parts[1];
-        const phrase = parts.slice(2).join(' ');
-
-        if (!ruleId || !phrase) {
-            return message.channel.send('Please provide a rule ID and the phrase.');
-        }
-
-        rules[ruleId] = phrase;
-        saveRules(rules);
-        return message.channel.send(`Rule ${ruleId} added successfully.`);
-    }
-
     // Handle adding image to cache
     await addImageToCache(message);
 });
+
+
+
+
+
+
+
 
 // Log in the bot using the token from the .env file
 client.login(process.env.BOT_TOKEN);
