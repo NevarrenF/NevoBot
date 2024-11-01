@@ -270,10 +270,47 @@ const commandDescriptions = {
 client.on('messageCreate', async (message) => {
     console.log(`Received message: ${message.content}`);
 
+     // Handle the !nevoboyadd command
+     if (message.content.trim().toLowerCase() === '!nevoboyadd') {
+        // Fetch the most recent message before this command
+        const messages = await message.channel.messages.fetch({ limit: 2 });
+        const lastMessage = messages.last();
+
+        if (!lastMessage || lastMessage.id === message.id) {
+            return message.channel.send('Could not find the previous message.');
+        }
+
+        // Extract image URL from the last message
+        let imageUrl = null;
+
+        if (lastMessage.attachments.size > 0) {
+            imageUrl = lastMessage.attachments.first().url;
+        } else {
+            imageUrl = extractPixivImageUrl(lastMessage) || extractTwitterImageUrl(lastMessage) || extractFxTwitterLink(lastMessage);
+        }
+
+        if (imageUrl && await verifyUrl(imageUrl)) {
+            const isDuplicate = imageCache.some((img) => img.url === imageUrl);
+            if (!isDuplicate) {
+                const newId = imageCache.length + 1;
+                imageCache.push({ id: newId, url: imageUrl });
+                saveImageCache();
+                return message.channel.send(`Image added to cache with ID: ${newId}`);
+            } else {
+                return message.channel.send('This image is already in the cache.');
+            }
+        } else {
+            return message.channel.send('No valid image found in the previous message.');
+        }
+    }
+
+
     // Ignore messages from bots
     if (message.author.bot) return;
 
     const userMessage = message.content.trim().toLowerCase(); // Normalize user message
+
+    
 
     // Check if the message is from the target channel
     if (message.channel.id === TARGET_CHANNEL_ID) {
@@ -359,30 +396,47 @@ client.on('messageCreate', async (message) => {
         return message.channel.send(`Rule ${ruleId} added successfully.`);
     }
 
-    // Handle the !nevoboy command
-    if (userMessage.startsWith('!nevoboy')) {
-        const parts = userMessage.split(' '); // Split the command and arguments
-        if (parts.length === 1) {
-            // If no ID is provided, send a random image
-            if (imageCache.length > 0) {
-                const randomIndex = Math.floor(Math.random() * imageCache.length);
-                const randomImage = imageCache[randomIndex];
-                return message.channel.send(`ID: ${randomImage.id}\n${randomImage.url}`);
-            } else {
-                return message.channel.send('No images available in the cache.');
-            }
-        } else if (parts.length === 2) {
-            // If an ID is provided, send the image with that ID
-            const id = parseInt(parts[1], 10);
-            const image = imageCache.find(img => img.id === id);
+// Function to get a more random index using a time-based seed
+function getRandomIndex(array) {
+    const seed = Date.now();
+    return Math.floor(((Math.random() * seed) % array.length));
+}
 
-            if (image) {
-                return message.channel.send(`ID: ${image.id}\n${image.url}`);
-            } else {
-                return message.channel.send(`No image found with ID: ${id}`);
-            }
+// The !nevoboy command
+if (userMessage.startsWith('!nevoboy')) {
+    const parts = userMessage.split(' '); // Split the command and arguments
+    if (parts.length === 1) {
+        // Original random image behavior
+        if (imageCache.length > 0) {
+            const randomIndex = getRandomIndex(imageCache);
+            const randomImage = imageCache[randomIndex];
+            return message.channel.send(`ID: ${randomImage.id}\n${randomImage.url}`);
+        } else {
+            return message.channel.send('No images available in the cache.');
+        }
+    } else if (parts.length === 2) {
+        // Specific ID behavior
+        const id = parseInt(parts[1], 10);
+        const image = imageCache.find(img => img.id === id);
+
+        if (image) {
+            return message.channel.send(`ID: ${image.id}\n${image.url}`);
+        } else {
+            return message.channel.send(`No image found with ID: ${id}`);
+        }
+    } else if (parts.length === 3 && parts[1] === 'for') {
+        // New behavior for '!nevoboy for @username'
+        const mentionedUser = parts[2];
+        if (imageCache.length > 0) {
+            const randomIndex = getRandomIndex(imageCache);
+            const randomImage = imageCache[randomIndex];
+            return message.channel.send(`Nevoboy for ${mentionedUser}\nID: ${randomImage.id}\n${randomImage.url}`);
+        } else {
+            return message.channel.send('No images available in the cache.');
         }
     }
+}
+
 
     // Handle the command to build the cache
     if (userMessage === '!nevobuildcache') {
