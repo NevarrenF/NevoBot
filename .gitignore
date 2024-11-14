@@ -11,3 +11,5 @@ commandwords.json
 rules.json
 BackupNew
 NevoBot.bat
+storage/deleted_ids.json
+storage/deleted_images.json
